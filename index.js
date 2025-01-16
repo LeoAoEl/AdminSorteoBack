@@ -259,6 +259,105 @@ app.get("/boletos/correo/:correo", async (req, res) => {
   }
 });
 
+// Guardar ganador con lugar
+app.post("/ganadores", async (req, res) => {
+  const { ID_SORTEO, nombre, celular, correo, lugar } = req.body.data;
+  console.log("body ganadores", req.body.data);
+
+  if (!ID_SORTEO || !nombre || !celular || !correo || !lugar) {
+    return res
+      .status(400)
+      .json({ message: "Todos los campos son obligatorios." });
+  }
+
+  try {
+    // Verificar si el sorteo existe y está activo
+    const [sorteo] = await db.execute(
+      "SELECT * FROM sorteos WHERE ID_SORTEO = ? AND isActive = 1",
+      [ID_SORTEO]
+    );
+
+    if (sorteo.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "Sorteo no encontrado o no está activo." });
+    }
+
+    // Agregar el ganador con el lugar
+    await db.execute(
+      "INSERT INTO ganadores (ID_SORTEO, nombre, celular, correo, lugar) VALUES (?, ?, ?, ?, ?)",
+      [ID_SORTEO, nombre, celular, correo, lugar]
+    );
+
+    res.status(201).json({ message: "Ganador agregado exitosamente." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al agregar el ganador." });
+  }
+});
+
+// Obtener ganadores con orden por lugar y por sorteo
+app.get("/ganadores", async (req, res) => {
+  const { ID_SORTEO } = req.query;
+
+  if (!ID_SORTEO) {
+    return res.status(400).json({ error: "ID_SORTEO es obligatorio." });
+  }
+
+  const query = `
+    SELECT g.ID_GANADOR, g.nombre, g.celular, g.correo, g.lugar, s.nombre AS sorteo
+    FROM ganadores g
+    JOIN sorteos s ON g.ID_SORTEO = s.ID_SORTEO
+    WHERE g.ID_SORTEO = ?
+    ORDER BY g.lugar ASC
+  `;
+
+  try {
+    const [results] = await db.query(query, [ID_SORTEO]);
+    res.json(results);
+  } catch (err) {
+    console.error("Error al obtener ganadores:", err);
+    res.status(500).json({ error: "Error al obtener ganadores" });
+  }
+});
+app.delete("/ganadores/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Eliminar el ganador por su ID
+    const [result] = await db.execute(
+      "DELETE FROM ganadores WHERE ID_GANADOR = ?",
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Ganador no encontrado." });
+    }
+
+    res.status(200).json({ message: "Ganador eliminado exitosamente." });
+  } catch (error) {
+    console.error("Error al eliminar ganador:", error);
+    res.status(500).json({ message: "Error al eliminar el ganador." });
+  }
+});
+//todos los ganadores historico de todos los sorteos
+app.get("/ganadores/todos", async (req, res) => {
+  const query = `
+    SELECT g.ID_GANADOR, g.nombre, g.celular, g.correo, g.lugar, s.nombre AS sorteo
+    FROM ganadores g
+    JOIN sorteos s ON g.ID_SORTEO = s.ID_SORTEO
+    ORDER BY s.nombre ASC, g.lugar ASC
+  `;
+
+  try {
+    const [results] = await db.query(query); // Usar promesas con .query()
+    res.json(results);
+  } catch (err) {
+    console.error("Error al obtener todos los ganadores:", err);
+    res.status(500).json({ error: "Error al obtener todos los ganadores" });
+  }
+});
+
 //endpoints para pagina
 // Obtener el sorteo activo con sus 60,000 boletos
 //Reponse:
