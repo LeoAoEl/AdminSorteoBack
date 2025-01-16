@@ -230,6 +230,35 @@ app.post("/boletos/confirmar", async (req, res) => {
   }
 });
 
+app.get("/boletos/correo/:correo", async (req, res) => {
+  const { correo } = req.params;
+
+  try {
+    const [rows] = await db.query("SELECT * FROM boletos WHERE correo = ?", [
+      correo,
+    ]);
+
+    // Renombrar el campo ID_BOLETO a id
+    const transformedRows = rows.map((boleto) => ({
+      id: boleto.ID_BOLETO,
+      numero_boleto: boleto.numero_boleto,
+      ID_SORTEO: boleto.ID_SORTEO,
+      estado: boleto.estado,
+      nombre: boleto.nombre,
+      //celular: boleto.celular,
+      correo: boleto.correo,
+      fecha_apartado: boleto.fecha_apartado
+        ? formatFecha(boleto.fecha_apartado)
+        : null,
+    }));
+
+    res.json(transformedRows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error al obtener los boletos por correo" });
+  }
+});
+
 //endpoints para pagina
 // Obtener el sorteo activo con sus 60,000 boletos
 //Reponse:
