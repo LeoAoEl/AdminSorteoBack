@@ -19,6 +19,33 @@ const db = mysql.createPool({
   database: process.env.DB_NAME,
 });
 
+const nodemailer = require("nodemailer");
+
+// Configuración del transportador
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "elnevadosorteos@gmail.com", // Tu correo
+    pass: "raif qamg pdkw cjxk", // Contraseña de aplicación
+  },
+});
+
+// Función para enviar correos
+async function enviarCorreo(destinatario, asunto, mensaje) {
+  try {
+    const info = await transporter.sendMail({
+      from: '"Nevado Sorteos" <elnevadosorteos@gmail.com>', // Remitente
+      to: destinatario, // Destinatario(s)
+      subject: asunto, // Asunto del correo
+      html: mensaje, // Contenido en HTML
+    });
+
+    console.log("Correo enviado:", info.messageId);
+  } catch (error) {
+    console.error("Error al enviar correo:", error);
+  }
+}
+
 //Insertar nuevo sorteo
 app.post("/sorteos", async (req, res) => {
   console.log("Entró al endpoint sorteos,", req.body.data);
@@ -221,12 +248,89 @@ app.post("/boletos/confirmar", async (req, res) => {
     const query = `UPDATE boletos SET estado = 'confirmado' WHERE ID_BOLETO IN (${placeholders})`;
     const [result] = await db.query(query, ids);
 
+    // Enviar correo de confirmación
+
+    // Recuperar los números de los boletos desde la base de datos
+    const query2 = `
+        SELECT numero_boleto, correo 
+        FROM boletos 
+        WHERE ID_BOLETO IN (?)
+      `;
+
+    const [result2] = await db.query(query2, [ids]);
+
+    const numerosBoletos = result2.map((boleto) => boleto.numero_boleto);
+    const correo = result2[0].correo; // Toma el correo del primer boleto
+
+    // Enviar correo de confirmación
+    const asunto = "Confirmación de Boletos";
+    const mensaje = `
+      <h1>¡Hola, ${nombre}!</h1>
+      <p> los siguientes boletos fueron confirmados:</p>
+      <ul>
+        ${numerosBoletos.map((num) => `<li>Boleto Nº: ${num}</li>`).join("")}
+      </ul>
+      <p>Gracias por elegir Nevado Sorteos.</p>
+    `;
+    await enviarCorreo(correo, asunto, mensaje);
+
     res.json({
       message: `${result.affectedRows} boleto(s) actualizado(s) a "confirmado".`,
     });
   } catch (error) {
     console.error("Error al actualizar boletos:", error);
     res.status(500).json({ error: "Error al confirmar boletos" });
+  }
+});
+
+app.post("/boletos/desconfirmar", async (req, res) => {
+  const { ids } = req.body;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: "No se enviaron IDs válidos" });
+  }
+
+  try {
+    // Actualizar los boletos a estado "libre"
+    const placeholders = ids.map(() => "?").join(", ");
+    const query = `UPDATE boletos SET estado = 'apartado' WHERE ID_BOLETO IN (${placeholders})`;
+    const [result] = await db.query(query, ids);
+
+    // Recuperar los números de los boletos desde la base de datos
+    const query2 = `
+        SELECT numero_boleto, correo 
+        FROM boletos 
+        WHERE ID_BOLETO IN (?)
+      `;
+    const [result2] = await db.query(query2, [ids]);
+
+    if (result2.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "No se encontraron boletos para desconfirmar." });
+    }
+
+    const numerosBoletos = result2.map((boleto) => boleto.numero_boleto);
+    const correo = result2[0].correo; // Tomar el correo del primer boleto
+
+    // Enviar correo de desconfirmación
+    const asunto = "Desconfirmación de Boletos";
+    const mensaje = `
+      <h1>¡Hola!</h1>
+      <p>Los siguientes boletos han sido desconfirmados:</p>
+      <ul>
+        ${numerosBoletos.map((num) => `<li>Boleto Nº: ${num}</li>`).join("")}
+      </ul>
+      <p>Gracias por elegir Nevado Sorteos.</p>
+    `;
+    await enviarCorreo(correo, asunto, mensaje);
+
+    res.json({
+      message: `${result.affectedRows} boleto(s) actualizado(s) a "libre".`,
+    });
+  } catch (error) {
+    console.error("Error al desconfirmar boletos:", error);
+    res.status(500).json({ error: "Error al desconfirmar boletos" });
   }
 });
 
@@ -273,7 +377,7 @@ app.post("/ganadores", async (req, res) => {
   try {
     // Verificar si el sorteo existe y está activo
     const [sorteo] = await db.execute(
-      "SELECT * FROM sorteos WHERE ID_SORTEO = ? AND isActive = 1",
+      "SELECT * FROM sorteos WHERE ID_SORTEO = ?",
       [ID_SORTEO]
     );
 
@@ -358,40 +462,6 @@ app.get("/ganadores/todos", async (req, res) => {
   }
 });
 
-//endpoints para pagina
-// Obtener el sorteo activo con sus 60,000 boletos
-//Reponse:
-/* {
-  "sorteo": {
-    "ID_SORTEO": 1,
-    "nombre": "Sorteo #1",
-    "isActive": 1,
-    "descripcion": "desde 49 varos",
-    "fecha_creacion": "2025-01-03T21:34:20.000Z"
-  },
-  "boletos": [
-    {
-      "ID_BOLETO": 1,
-      "ID_SORTEO": 1,
-      "numero_boleto": "00001",
-      "estado": "apartado",
-      "nombre": "Marcos Avalos",
-      "celular": "31218923530",
-      "correo": "mavalos8@ucol.mx",
-      "fecha_apartado": "2025-01-03T22:42:33.000Z"
-    },
-    {
-      "ID_BOLETO": 2,
-      "ID_SORTEO": 1,
-      "numero_boleto": "00002",
-      "estado": "libre",
-      "nombre": null,
-      "celular": null,
-      "correo": null,
-      "fecha_apartado": null
-    }]
-}
-     */
 app.get("/sorteos/activo", async (req, res) => {
   const connection = await db.getConnection();
   try {
@@ -473,6 +543,26 @@ app.put("/boletos/apartar", async (req, res) => {
 
     // Confirmar la transacción
     await connection.commit();
+    // Enviar correo de confirmación
+
+    // Recuperar los números de los boletos desde la base de datos
+    const query = "SELECT numero_boleto FROM boletos WHERE ID_BOLETO IN (?)";
+    const [result2] = await db.query(query, [ids]);
+
+    const numerosBoletos = result2.map((boleto) => boleto.numero_boleto);
+
+    // Enviar correo de confirmación
+    const asunto = "Confirmación de Apartado de Boletos";
+    const mensaje = `
+      <h1>¡Hola, ${nombre}!</h1>
+      <p>Hemos recibido tu solicitud para apartar los siguientes boletos:</p>
+      <ul>
+        ${numerosBoletos.map((num) => `<li>Boleto Nº: ${num}</li>`).join("")}
+      </ul>
+      <p>Nos pondremos en contacto contigo al número ${celular} para más detalles.</p>
+      <p>Gracias por elegir Nevado Sorteos.</p>
+    `;
+    await enviarCorreo(correo, asunto, mensaje);
 
     // Responder con éxito
     res.status(200).json({
@@ -527,254 +617,7 @@ async function actualizarBoletosExpirados() {
     );
   });
 }
-/* host: "localhost",
-user: "root",
-password: "root",
-port: "3306",
-database: "prestamosdb", */
-//1.-Método para conectar el login
-app.post("/connect", (req, res) => {
-  const { host, user, password, database, port } = req.body;
 
-  const connection = mysql.createConnection({
-    host,
-    user,
-    password,
-    port,
-    database,
-  });
-
-  connection.connect((err) => {
-    if (err) {
-      return res.status(500).json({
-        error: "Error al conectar a la base de datos",
-        details: err.message,
-      });
-    }
-    res.json({ message: "Conexión exitosa" });
-    connection.end();
-  });
-});
-//2.-Método para traerme todas las tablas de la db actual
-app.post("/tables", (req, res) => {
-  const { host, user, password, database, port } = req.body;
-  const connection = mysql.createConnection({
-    host,
-    user,
-    password,
-    database,
-    port,
-  });
-
-  connection.query("SHOW TABLES", (err, results) => {
-    if (err) {
-      return res
-        .status(500)
-        .json({ error: "Error al listar tablas", details: err.message });
-    }
-    const tables = results.map((row) => Object.values(row)[0]);
-    res.json(tables);
-    connection.end();
-  });
-});
-
-/* // Endpoint para obtener datos de la tabla seleccionada
-app.post("/getTableData", (req, res) => {
-  const { tableName, host, user, password, database, port } = req.body;
-
-  const connection = mysql.createConnection({
-    host,
-    user,
-    password,
-    database,
-    port,
-  });
-
-  // Consulta para obtener datos de la tabla
-  const query = `SELECT * FROM ${tableName}`;
-
-  connection.query(query, (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: "Error fetching data" });
-    }
-    res.json(results);
-  });
-});
-
-app.post("/getTableStructure", (req, res) => {
-  const { tableName, host, user, password, database, port } = req.body;
-
-  const connection = mysql.createConnection({
-    host,
-    user,
-    password,
-    database,
-    port,
-  });
-  const query = `DESCRIBE ${tableName}`; // Consulta para obtener la estructura de la tabla
-
-  connection.query(query, (err, results) => {
-    if (err) {
-      return res.status(500).json({
-        error: "Error obteniendo la estructura de la tabla",
-        details: err.message,
-      });
-    }
-    res.json({ structure: results });
-  });
-});
-
-app.post("/insertData", (req, res) => {
-  const { tableName, host, user, password, database, port, data } = req.body;
-
-  const connection = mysql.createConnection({
-    host,
-    user,
-    password,
-    database,
-    port,
-  });
-
-  // Generar la consulta dinámica de inserción
-  const columns = Object.keys(data).join(", ");
-  const values = Object.values(data)
-    .map((value) => `'${value}'`)
-    .join(", ");
-
-  const query = `INSERT INTO ${tableName} (${columns}) VALUES (${values})`;
-
-  connection.query(query, (err, result) => {
-    if (err) {
-      return res
-        .status(500)
-        .json({ error: "Error insertando el registro", details: err.message });
-    }
-    res.json({ message: "Registro insertado correctamente" });
-  });
-});
-
-//6.-método que elimina los datos dinamicamente
-app.post("/deleteRows", async (req, res) => {
-  const { table, host, user, password, database, port, queries } = req.body;
-
-  const connection = mysql.createConnection({
-    host,
-    user,
-    password,
-    database,
-    port,
-  });
-
-  if (!table || !queries || queries.length === 0) {
-    return res.status(400).json({ error: "Datos inválidos." });
-  }
-
-  try {
-    // Asume que tienes una conexión a tu base de datos
-    for (const query of queries) {
-      connection.execute(query); // Ejecuta cada consulta
-    }
-
-    res.status(200).json({ message: "Filas eliminadas exitosamente." });
-  } catch (error) {
-    console.error("Error al eliminar filas:", error);
-    res.status(500).json({ error: "Error al eliminar filas." });
-  }
-});
-
-app.post("/updateData", (req, res) => {
-  const { tableName, data, keyFields, originalKeyValues, ...dbConfig } =
-    req.body;
-
-  const setClauses = Object.keys(data)
-    .map((field) => `\`${field}\` = ?`)
-    .join(", ");
-
-  const whereClauses = keyFields.map((key) => `\`${key}\` = ?`).join(" AND ");
-
-  const sql = `UPDATE \`${tableName}\` SET ${setClauses} WHERE ${whereClauses}`;
-  const values = [
-    ...Object.values(data),
-    ...keyFields.map((key) => originalKeyValues[key]),
-  ];
-  console.log("query update", sql);
-
-  const connection = mysql.createConnection(dbConfig);
-  connection.query(sql, values, (error, results) => {
-    if (error) {
-      return res.status(500).send("Error actualizando los datos");
-    }
-    res.send("Registro actualizado correctamente");
-  });
-  connection.end();
-});
-// Validar consultas de tipo SELECT
-const isValidSelectQuery = (query) => {
-  const selectRegex = /^\s*SELECT\s.+\sFROM\s.+/i;
-  return selectRegex.test(query.trim());
-};
-
-// Validar comandos de acción (INSERT, UPDATE, DELETE)
-const isValidActionCommand = (query) => {
-  const actionRegex = /^\s*(INSERT|UPDATE|DELETE)\s.+/i;
-  return actionRegex.test(query.trim());
-};
-// Endpoint para consultas personalizadas (SELECT)
-app.post("/executeQuery", async (req, res) => {
-  const { query, ...dbConfig } = req.body;
-
-  if (!isValidSelectQuery(query)) {
-    return res.status(400).json({ error: "Consulta SQL no válida" });
-  }
-
-  try {
-    // Crear conexión y usar Promesas
-    const connection = mysql.createConnection(dbConfig).promise();
-
-    // Ejecutar consulta
-    const [rows] = await connection.query(query);
-
-    // Cerrar conexión
-    await connection.end();
-
-    res.status(200).json({ data: rows });
-  } catch (error) {
-    console.error("Error ejecutando consulta SELECT:", error);
-    res.status(500).json({ error: error.sqlMessage });
-  }
-});
-app.post("/executeAction", async (req, res) => {
-  const { query, ...dbConfig } = req.body;
-
-  // Validar que el comando sea seguro (solo INSERT, UPDATE, DELETE)
-  if (!isValidActionCommand2(query)) {
-    return res
-      .status(400)
-      .json({ error: "Comando SQL no válido (solo INSERT, UPDATE, DELETE)." });
-  }
-
-  try {
-    const connection = await mysql.createConnection(dbConfig).promise();
-
-    // Asegúrate de usar parámetros para evitar inyección
-    const [result] = await connection.execute(query); // Asegúrate de usar el método execute de mysql2
-    await connection.end();
-
-    res.status(200).json({
-      message: "Comando ejecutado exitosamente.",
-      affectedRows: result.affectedRows,
-    });
-  } catch (error) {
-    console.error("Error ejecutando comando de acción:", error);
-    res.status(500).json({ error: error.sqlMessage });
-  }
-});
-// Función de validación de comandos SQL
-function isValidActionCommand2(query) {
-  const allowedCommands = ["INSERT", "UPDATE", "DELETE"];
-  const command = query.trim().split(" ")[0].toUpperCase();
-  return allowedCommands.includes(command);
-} */
 app.listen(5000, () =>
   console.log("Servidor corriendo en http://localhost:5000")
 );
